@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320">
+  <rect width="960" height="320" rx="16" fill="#171b24"/>
+  <g font-family="sans-serif" fill="#eaf0fb">
+    <text x="36" y="42" font-size="22">ComfyUI-NTAPI · 节点连接示意</text>
+    <text x="36" y="70" font-size="14" fill="#aab6cc">结构示意，非运行截图 · 可选参考图 → 模型节点 → 保存或下游处理</text>
+    <rect x="36" y="108" width="192" height="144" rx="10" fill="#30394b"/>
+    <text x="60" y="142" font-size="18">参考图（可选）</text>
+    <text x="60" y="177" font-size="14">IMAGE 参考图</text>
+    <text x="60" y="209" font-size="14">支持图片批次</text>
+    <rect x="330" y="100" width="300" height="166" rx="10" fill="#244641"/>
+    <text x="354" y="135" font-size="18">NTAPI-GPT生图</text>
+    <text x="354" y="166" font-size="18">NTAPI-Gemini生图</text>
+    <text x="354" y="202" font-size="14">提示词 / 模型 / 接口地址</text>
+    <text x="354" y="235" font-size="14">API密钥或 NTAPI_API_KEY</text>
+    <rect x="736" y="124" width="188" height="114" rx="10" fill="#30394b"/>
+    <text x="760" y="162" font-size="18">Save Image</text>
+    <text x="760" y="198" font-size="14">IMAGE 输出</text>
+    <text x="36" y="294" font-size="14" fill="#aab6cc">NTAPI-语言模型输出 STRING，可连接文本显示或提示词处理节点。</text>
+  </g>
+  <g stroke="#7cd6bd" fill="none" stroke-width="3">
+    <path d="M228 180 H324 m-10 -7 10 7 -10 7"/>
+    <path d="M630 180 H730 m-10 -7 10 7 -10 7"/>
+  </g>
+</svg>
