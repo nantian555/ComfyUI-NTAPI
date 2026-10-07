@@ -48,7 +48,7 @@ class NodeTests(unittest.TestCase):
         return cls().run(**(defaults(cls) | {"API密钥": KEY, "提示词": "draw"} | values))
 
     def test_registration(self):
-        self.assertEqual(len(PLUGIN.NODE_CLASS_MAPPINGS), 3)
+        self.assertEqual(len(PLUGIN.NODE_CLASS_MAPPINGS), 9 if 'NTAPISeedance20Node' in PLUGIN.NODE_CLASS_MAPPINGS else 7)
         for name, cls in PLUGIN.NODE_CLASS_MAPPINGS.items():
             self.assertTrue(name.startswith("NTAPI"))
             self.assertTrue(PLUGIN.NODE_DISPLAY_NAME_MAPPINGS[name].startswith("NTAPI-"))
@@ -60,8 +60,11 @@ class NodeTests(unittest.TestCase):
             image, = self.run_image()
         payload = send.call_args.kwargs["json"]
         self.assertEqual(type(payload["n"]), int)
-        for field in ("quality", "style", "response_format"):
-            self.assertNotIn(field, payload)
+        self.assertEqual(payload["quality"], "auto")
+        self.assertEqual(payload["size"], "auto")
+        self.assertEqual(payload["output_format"], "png")
+        self.assertEqual(payload["response_format"], "url")
+        self.assertNotIn("style", payload)
         self.assertEqual(tuple(image.shape), (1, 8, 10, 3))
         self.assertEqual(image.dtype, torch.float32)
 
@@ -82,7 +85,7 @@ class NodeTests(unittest.TestCase):
         for spelling in ("inlineData", "inline_data"):
             payload = {"candidates": [{"content": {"parts": [{spelling: {"data": B64}}]}}]}
             with self.subTest(spelling=spelling), patch.object(nodes, "_request", return_value=response(payload)) as send:
-                image, source = self.run_image(nodes.NTAPIGeminiImageNode, **{"接口根地址": "https://ntapi.org/v1", "图像比例": "16:9", "种子": 42})
+                image, source = self.run_image(nodes.NTAPIGeminiImageNode, **{"接口根地址": "https://ntapi.org/v1", "比例": "16:9", "种子": 42})
                 self.assertEqual(tuple(image.shape), (1, 8, 10, 3))
                 self.assertEqual(source, "inlineData")
                 self.assertIn("/v1beta/models/gemini-3-pro-image-preview:generateContent", send.call_args.args[1])
@@ -147,21 +150,98 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(len(images), 2)
 
     def test_example_workflows(self):
-        paths = list((ROOT / "examples").glob("*.workflow.json"))
+        paths = list((ROOT / "examples").glob("*-image.workflow.json"))
         self.assertEqual(len(paths), 2)
         for path in paths:
             workflow = json.loads(path.read_text(encoding="utf-8"))
             source, sink = workflow["nodes"]
             cls = PLUGIN.NODE_CLASS_MAPPINGS[source["type"]]
             names = list(cls.INPUT_TYPES()["required"])
-            self.assertEqual(len(source["widgets_values"]), len(names))
-            self.assertEqual(dict(zip(names, source["widgets_values"]))["API密钥"], "")
+            has_control = cls.INPUT_TYPES()['required']['种子'][1].get('control_after_generate', False)
+            self.assertEqual(len(source["widgets_values"]), len(names) + int(has_control))
+            key_name = "API秘钥" if has_control else "API密钥"
+            self.assertEqual(dict(zip(names, source["widgets_values"]))[key_name], "")
             self.assertEqual(sink["type"], "SaveImage")
             self.assertEqual(workflow["links"], [[1, source["id"], 0, sink["id"], 0, "IMAGE"]])
 
     def test_explicit_key_wins(self):
         with patch.dict(os.environ, {"NTAPI_API_KEY": "environment-test"}):
             self.assertEqual(nodes._api_key(KEY), KEY)
+
+    def test_gpt_input_order_and_choices(self):
+        inputs = nodes.NTAPIOpenAIImageNode.INPUT_TYPES()['required']
+        self.assertEqual(list(inputs), ['提示词','API秘钥','模型','比例','分辨率','质量','风格','数量','输出格式','返回格式','绕过代理','超时时间','种子'])
+        self.assertTrue(inputs['种子'][1]['control_after_generate'])
+        self.assertEqual(inputs['质量'][0], ['auto','high','medium','low'])
+        self.assertEqual(inputs['输出格式'][0], ['png','jpeg','webp'])
+        self.assertEqual(inputs['返回格式'][0], ['url','b64_json'])
+
+    def test_gemini_input_order_and_supported_fields(self):
+        inputs = nodes.NTAPIGeminiImageNode.INPUT_TYPES()['required']
+        self.assertEqual(list(inputs), ['提示词','API秘钥','模型','比例','分辨率','输出格式','绕过代理','超时时间','种子'])
+        self.assertTrue(inputs['种子'][1]['control_after_generate'])
+        self.assertEqual(inputs['模型'][0], nodes.GEMINI_IMAGE_MODELS)
+        self.assertEqual(inputs['分辨率'][0], ['1K','2K','4K'])
+        for field in ('质量','风格','数量','返回格式'):
+            self.assertNotIn(field,inputs)
+
+    def test_gemini_native_options_and_single_request(self):
+        body = {'candidates':[{'content':{'parts':[{'inlineData':{'data':B64}}]}}]}
+        with patch.dict(os.environ, {'NTAPI_BASE_URL':'https://example.org/v1'}), patch.object(nodes,'_request',return_value=response(body)) as send:
+            self.run_image(nodes.NTAPIGeminiImageNode, **{'API秘钥':KEY,'模型':'gemini-3.1-flash-image-preview','比例':'9:16','分辨率':'4K','输出格式':'jpeg','超时时间':333,'种子':42})
+        self.assertEqual(send.call_count,1)
+        self.assertEqual(send.call_args.args[1], 'https://example.org/v1beta/models/gemini-3.1-flash-image-preview:generateContent')
+        self.assertEqual(send.call_args.kwargs['timeout'],(30,333))
+        payload=send.call_args.kwargs['json']
+        self.assertEqual(payload['contents'][0]['parts'][0]['text'],'draw')
+        config=payload['generationConfig']
+        self.assertEqual(config['imageConfig'], {'aspectRatio':'9:16','imageSize':'4K','imageOutputOptions':{'mimeType':'image/jpeg'}})
+        self.assertEqual(config['seed'],42)
+        self.assertNotIn('style',payload)
+        self.assertNotIn('n',payload)
+
+    def test_gemini_zero_seed_auto_ratio(self):
+        body={'candidates':[{'content':{'parts':[{'inline_data':{'data':B64}}]}}]}
+        with patch.object(nodes,'_request',return_value=response(body)) as send:
+            self.run_image(nodes.NTAPIGeminiImageNode)
+        config=send.call_args.kwargs['json']['generationConfig']
+        self.assertNotIn('seed',config)
+        self.assertNotIn('aspectRatio',config['imageConfig'])
+
+    def test_gpt_dimensions_and_auto(self):
+        self.assertEqual(nodes._image_size('1:1','4k'), '2880x2880')
+        self.assertEqual(nodes._image_size('16:9','4k'), '3840x2160')
+        self.assertEqual(nodes._image_size('9:16','2k'), '1440x2560')
+        self.assertEqual(nodes._image_size('21:9','2k'), '3024x1296')
+        for ratio in nodes.IMAGE_RATIOS:
+            for resolution in nodes.IMAGE_RESOLUTIONS:
+                result = nodes._image_size(ratio,resolution)
+                if ratio == 'auto':
+                    self.assertEqual(result,'auto')
+                else:
+                    w,h = map(int,result.split('x'))
+                    a,b = map(int,ratio.split(':'))
+                    self.assertAlmostEqual(w/h,a/b)
+
+    def test_gpt_new_parameters_json_and_multipart(self):
+        for with_ref in (False, True):
+            with self.subTest(edit=with_ref), patch.object(nodes, '_request', return_value=response({'data':[{'b64_json':B64}]})) as send:
+                extra = {'参考图1':torch.ones(1,3,4,3)} if with_ref else {}
+                self.run_image(**{'API秘钥':KEY,'模型':'gpt-image-2.5-flare','比例':'9:16','分辨率':'4k','输出格式':'webp','超时时间':321,'种子':123,**extra})
+                fields = send.call_args.kwargs['data' if with_ref else 'json']
+                self.assertEqual(fields['model'],'gpt-image-2.5-flare')
+                self.assertEqual(fields['size'],'2160x3840')
+                self.assertEqual(fields['output_format'],'webp')
+                self.assertNotIn('seed',fields)
+                self.assertEqual(send.call_args.kwargs['timeout'],(30,321))
+
+    def test_gpt_download_timeout_and_environment_url(self):
+        result = response({})
+        result._content = PNG
+        with patch.dict(os.environ, {'NTAPI_BASE_URL':'https://example.org/v1'}), patch.object(nodes,'_request',side_effect=[response({'data':[{'url':'https://cdn.example.org/image.png'}]}),result]) as send:
+            self.run_image(**{'超时时间':222})
+            self.assertEqual(send.call_args_list[0].args[1],'https://example.org/v1/images/generations')
+            self.assertEqual(send.call_args_list[1].kwargs['timeout'],222)
 
     def test_transport_credentials(self):
         with patch.object(nodes.requests, "Session") as factory:

@@ -24,12 +24,36 @@ CHAT_MODELS = [
     "gemini-3.1-pro-preview",
     "gemini-3.7-flash",
 ]
-OPENAI_IMAGE_MODELS = ["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]
+OPENAI_IMAGE_MODELS = ["gpt-image-2", "gpt-image-2-all", "gpt-image-2-2K", "gpt-image-2-4K",
+                       "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]
 GEMINI_IMAGE_MODELS = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview"]
-IMAGE_SIZES = ["1024x1024", "1536x1024", "1024x1536"]
-IMAGE_QUALITIES = ["服务默认", "standard", "low", "medium", "high"]
+IMAGE_RATIOS = ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"]
+IMAGE_RESOLUTIONS = ["1k", "2k", "4k"]
+IMAGE_QUALITIES = ["auto", "high", "medium", "low"]
 IMAGE_STYLES = ["服务默认", "vivid", "natural"]
-IMAGE_RESPONSE_FORMATS = ["服务默认", "url", "b64_json"]
+IMAGE_RESPONSE_FORMATS = ["url", "b64_json"]
+IMAGE_OUTPUT_FORMATS = ["png", "jpeg", "webp"]
+IMAGE_DIMENSIONS = {
+    "1:1": [(1024, 1024), (2048, 2048), (2880, 2880)],
+    "3:2": [(1248, 832), (2496, 1664), (3504, 2336)],
+    "4:3": [(1152, 864), (2304, 1728), (3264, 2448)],
+    "5:4": [(1120, 896), (2240, 1792), (3200, 2560)],
+    "16:9": [(1280, 720), (2560, 1440), (3840, 2160)],
+    "2:1": [(2048, 1024), (2688, 1344), (3840, 1920)],
+    "21:9": [(1456, 624), (3024, 1296), (3696, 1584)],
+}
+
+
+def _image_size(ratio, resolution):
+    if ratio == "auto":
+        return "auto"
+    index = IMAGE_RESOLUTIONS.index(resolution)
+    if ratio in IMAGE_DIMENSIONS:
+        width, height = IMAGE_DIMENSIONS[ratio][index]
+    else:
+        reverse = ":".join(reversed(ratio.split(":")))
+        height, width = IMAGE_DIMENSIONS[reverse][index]
+    return f"{width}x{height}"
 GEMINI_SIZES = ["1K", "2K", "4K"]
 GEMINI_RATIOS = ["自动", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]
 
@@ -156,7 +180,7 @@ def _origin(url: str) -> tuple:
     return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
 
 
-def _decode_image_candidates(body: Any, base_url: str, api_key: str, bypass_proxy: bool) -> List[torch.Tensor]:
+def _decode_image_candidates(body: Any, base_url: str, api_key: str, bypass_proxy: bool, timeout_sec: int = 120) -> List[torch.Tensor]:
     images: List[torch.Tensor] = []
     base = base_url.rstrip("/") + "/"
     for kind, value in _walk_image_values(body):
@@ -167,7 +191,7 @@ def _decode_image_candidates(body: Any, base_url: str, api_key: str, bypass_prox
                 headers = {"Accept": "image/*,*/*;q=0.8"}
                 if _origin(image_url) == _origin(base_url):
                     headers["Authorization"] = f"Bearer {(api_key or '').strip()}"
-                response = _request("GET", image_url, bypass_proxy, headers=headers, timeout=120)
+                response = _request("GET", image_url, bypass_proxy, headers=headers, timeout=timeout_sec)
                 if not 200 <= response.status_code < 300:
                     raise RuntimeError(f"NTAPI：下载图片失败，HTTP {response.status_code}。图片地址需直接返回文件。")
                 images.append(_pil_to_tensor(Image.open(io.BytesIO(response.content))))
@@ -295,16 +319,19 @@ class NTAPIOpenAIImageNode:
         return {
             "required": {
                 "提示词": ("STRING", {"multiline": True, "default": ""}),
-                "模型预设": (OPENAI_IMAGE_MODELS, {"default": OPENAI_IMAGE_MODELS[0]}),
-                "自定义模型": ("STRING", {"default": ""}),
-                "尺寸": (IMAGE_SIZES, {"default": IMAGE_SIZES[0]}),
-                "质量": (IMAGE_QUALITIES, {"default": "服务默认"}),
+                "API秘钥": ("STRING", {"default": "", "tooltip": "留空时使用 NTAPI_API_KEY 环境变量。"}),
+                "模型": (OPENAI_IMAGE_MODELS, {"default": OPENAI_IMAGE_MODELS[0]}),
+                "比例": (IMAGE_RATIOS, {"default": "auto", "tooltip": "auto 交给服务决定；固定比例与分辨率共同确定像素尺寸。"}),
+                "分辨率": (IMAGE_RESOLUTIONS, {"default": "1k"}),
+                "质量": (IMAGE_QUALITIES, {"default": "auto"}),
                 "风格": (IMAGE_STYLES, {"default": "服务默认"}),
                 "数量": ("INT", {"default": 1, "min": 1, "max": 10}),
-                "返回格式": (IMAGE_RESPONSE_FORMATS, {"default": "服务默认"}),
-                "API密钥": ("STRING", {"default": ""}),
-                "接口地址": ("STRING", {"default": DEFAULT_V1_URL}),
+                "输出格式": (IMAGE_OUTPUT_FORMATS, {"default": "png"}),
+                "返回格式": (IMAGE_RESPONSE_FORMATS, {"default": "url"}),
                 "绕过代理": ("BOOLEAN", {"default": True}),
+                "超时时间": ("INT", {"default": 900, "min": 60, "max": 1200, "tooltip": "秒；单次生成请求或结果图片下载的等待时间，不会自动重试。"}),
+                "种子": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True,
+                                  "tooltip": "用于 ComfyUI 缓存及运行后控制，不发送给图片接口，不保证相同种子复现。"}),
             },
             "optional": {f"参考图{i}": ("IMAGE",) for i in range(1, 15)},
         }
@@ -315,21 +342,23 @@ class NTAPIOpenAIImageNode:
     CATEGORY = CATEGORY_NAME
 
     def run(self, **kwargs):
-        api_key = _api_key(kwargs.get("API密钥") or "")
+        api_key = _api_key(kwargs.get("API秘钥") or kwargs.get("API密钥") or "")
         prompt = (kwargs.get("提示词") or "").strip()
         if not prompt:
             raise RuntimeError("NTAPI：GPT 生图提示词不能为空。")
         refs = _reference_frames(kwargs)
-        base_url = (kwargs.get("接口地址") or DEFAULT_V1_URL).strip().rstrip("/")
-        model_name = _model(kwargs.get("模型预设") or OPENAI_IMAGE_MODELS[0], kwargs.get("自定义模型", ""))
+        base_url = (kwargs.get("接口地址") or os.environ.get("NTAPI_BASE_URL") or DEFAULT_V1_URL).strip().rstrip("/")
+        model_name = kwargs.get("模型") or _model(kwargs.get("模型预设") or OPENAI_IMAGE_MODELS[0], kwargs.get("自定义模型", ""))
+        timeout_sec = int(kwargs.get("超时时间", 900))
         fields = {
             "model": model_name,
             "prompt": prompt,
-            "size": kwargs.get("尺寸", IMAGE_SIZES[0]),
+            "size": kwargs.get("尺寸") or _image_size(kwargs.get("比例", "auto"), kwargs.get("分辨率", "1k")),
             "n": int(kwargs.get("数量", 1)),
         }
-        for label, field in (("质量", "quality"), ("风格", "style"), ("返回格式", "response_format")):
-            value = kwargs.get(label, "服务默认")
+        for label, field, default in (("质量", "quality", "auto"), ("风格", "style", "服务默认"),
+                                      ("输出格式", "output_format", "png"), ("返回格式", "response_format", "url")):
+            value = kwargs.get(label, default)
             if value != "服务默认":
                 fields[field] = value
         bypass_proxy = bool(kwargs.get("绕过代理", True))
@@ -339,15 +368,15 @@ class NTAPIOpenAIImageNode:
                          for i, image in enumerate(refs, 1)]
                 response = _request(
                     "POST", base_url + "/images/edits", bypass_proxy,
-                    headers=_headers(api_key, json_body=False), data={key: str(value) for key, value in fields.items()}, files=files, timeout=(120, 600)
+                    headers=_headers(api_key, json_body=False), data={key: str(value) for key, value in fields.items()}, files=files, timeout=(min(30, timeout_sec), timeout_sec)
                 )
             else:
                 response = _request(
                     "POST", base_url + "/images/generations", bypass_proxy,
-                    headers=_headers(api_key), json=fields, timeout=(120, 600)
+                    headers=_headers(api_key), json=fields, timeout=(min(30, timeout_sec), timeout_sec)
                 )
             body = _json_response(response)
-            images = _decode_image_candidates(body, base_url, api_key, bypass_proxy)
+            images = _decode_image_candidates(body, base_url, api_key, bypass_proxy, timeout_sec)
             return (_stack_images(images),)
         except requests.RequestException:
             raise RuntimeError("NTAPI：生图请求失败或超时，请检查服务控制台；请勿立即重复提交。") from None
@@ -359,14 +388,15 @@ class NTAPIGeminiImageNode:
         return {
             "required": {
                 "提示词": ("STRING", {"multiline": True, "default": ""}),
-                "模型预设": (GEMINI_IMAGE_MODELS, {"default": GEMINI_IMAGE_MODELS[0]}),
-                "自定义模型": ("STRING", {"default": ""}),
-                "图像尺寸": (GEMINI_SIZES, {"default": "2K"}),
-                "图像比例": (GEMINI_RATIOS, {"default": "自动"}),
-                "种子": ("INT", {"default": 0, "min": 0, "max": 2147483647}),
-                "API密钥": ("STRING", {"default": ""}),
-                "接口根地址": ("STRING", {"default": DEFAULT_ROOT_URL}),
+                "API秘钥": ("STRING", {"default": "", "tooltip": "留空时使用 NTAPI_API_KEY 环境变量。"}),
+                "模型": (GEMINI_IMAGE_MODELS, {"default": GEMINI_IMAGE_MODELS[0]}),
+                "比例": (GEMINI_RATIOS, {"default": "自动"}),
+                "分辨率": (GEMINI_SIZES, {"default": "2K"}),
+                "输出格式": (IMAGE_OUTPUT_FORMATS, {"default": "png", "tooltip": "请求 Gemini 的输出 MIME 格式；实际支持情况以模型服务为准。"}),
                 "绕过代理": ("BOOLEAN", {"default": True}),
+                "超时时间": ("INT", {"default": 900, "min": 60, "max": 1200, "tooltip": "秒；用于请求与结果图片下载，不自动重试。"}),
+                "种子": ("INT", {"default": 0, "min": 0, "max": 2147483647, "control_after_generate": True,
+                                  "tooltip": "0 不发送种子；正数发送给 Gemini。可复现性取决于服务支持。"}),
             },
             "optional": {f"参考图{i}": ("IMAGE",) for i in range(1, 15)},
         }
@@ -377,7 +407,7 @@ class NTAPIGeminiImageNode:
     CATEGORY = CATEGORY_NAME
 
     def run(self, **kwargs):
-        api_key = _api_key(kwargs.get("API密钥") or "")
+        api_key = _api_key(kwargs.get("API秘钥") or kwargs.get("API密钥") or "")
         prompt = (kwargs.get("提示词") or "").strip()
         refs = _reference_frames(kwargs)
         if not prompt and not refs:
@@ -386,25 +416,31 @@ class NTAPIGeminiImageNode:
         parts.extend({"inlineData": _inline_data(image)} for image in refs)
         generation_config: Dict[str, Any] = {
             "responseModalities": ["IMAGE"],
-            "imageConfig": {"imageSize": kwargs.get("图像尺寸", "2K")},
+            "imageConfig": {
+                "imageSize": kwargs.get("分辨率", kwargs.get("图像尺寸", "2K")),
+                "imageOutputOptions": {"mimeType": {
+                    "png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"
+                }.get(kwargs.get("输出格式", "png"), "image/png")},
+            },
         }
-        ratio = _gemini_ratio(kwargs.get("图像比例", "自动"))
+        ratio = _gemini_ratio(kwargs.get("比例", kwargs.get("图像比例", "自动")))
         if ratio:
             generation_config["imageConfig"]["aspectRatio"] = ratio
         seed = int(kwargs.get("种子", 0) or 0)
         if seed > 0:
             generation_config["seed"] = seed
         body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation_config}
-        model_name = _model(kwargs.get("模型预设") or GEMINI_IMAGE_MODELS[0], kwargs.get("自定义模型", ""))
-        root_url = kwargs.get("接口根地址") or DEFAULT_ROOT_URL
+        model_name = kwargs.get("模型") or _model(kwargs.get("模型预设") or GEMINI_IMAGE_MODELS[0], kwargs.get("自定义模型", ""))
+        root_url = kwargs.get("接口根地址") or os.environ.get("NTAPI_BASE_URL") or DEFAULT_ROOT_URL
+        timeout_sec = int(kwargs.get("超时时间", 900))
         bypass_proxy = bool(kwargs.get("绕过代理", True))
         try:
             response = _request(
                 "POST", _gemini_url(root_url, model_name), bypass_proxy,
-                headers=_headers(api_key), json=body, timeout=(120, 600)
+                headers=_headers(api_key), json=body, timeout=(min(30, timeout_sec), timeout_sec)
             )
             payload = _json_response(response)
-            images = _decode_image_candidates(payload, root_url, api_key, bypass_proxy)
+            images = _decode_image_candidates(payload, root_url, api_key, bypass_proxy, timeout_sec)
             result_format = "inlineData" if any(
                 isinstance(part, dict) and ("inlineData" in part or "inline_data" in part)
                 for candidate in payload.get("candidates", []) if isinstance(candidate, dict)

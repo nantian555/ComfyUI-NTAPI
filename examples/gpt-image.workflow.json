@@ -11,81 +11,17 @@
       ],
       "size": [
         420,
-        750
+        510
       ],
       "flags": {},
       "order": 0,
       "mode": 0,
       "inputs": [
         {
-          "name": "参考图1",
+          "name": "参考图.参考图1",
           "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图2",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图3",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图4",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图5",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图6",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图7",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图8",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图9",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图10",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图11",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图12",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图13",
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "name": "参考图14",
-          "type": "IMAGE",
-          "link": null
+          "link": null,
+          "label": "参考图1"
         }
       ],
       "outputs": [
@@ -103,16 +39,19 @@
       },
       "widgets_values": [
         "一只橙色小猫坐在窗边，柔和的自然光，水彩插画。",
-        "gpt-image-2",
         "",
-        "1024x1024",
-        "服务默认",
+        "gpt-image-2",
+        "auto",
+        "1k",
+        "auto",
         "服务默认",
         1,
-        "服务默认",
-        "",
-        "https://ntapi.org/v1",
-        true
+        "png",
+        "url",
+        true,
+        900,
+        0,
+        "fixed"
       ]
     },
     {
