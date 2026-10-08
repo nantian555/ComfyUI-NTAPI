@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Gemini 生图模型菜单改为 NanobananaPro、Nanobanana2.1、Nanobanana2，增加 gemini-nano-banana-2.1 映射并迁移旧显示值。
 - 简化 Seedance 2.5 模型菜单为 `seedance2.5t2v`、`seedance2.5i2v`、`seedance2.5multi`；兼容旧 standard/global 工作流值。
 
 ## 0.2.0a1 — 2026-10-06（本地预览）

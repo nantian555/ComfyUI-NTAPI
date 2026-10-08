@@ -1,5 +1,12 @@
 # 本地发布检查记录
 
+## 2026-10-08 Gemini 模型名称与 Nanobanana2.1 映射
+
+- 模型菜单依次为NanobananaPro、Nanobanana2.1、Nanobanana2，分别调用gemini-3-pro-image-preview、gemini-nano-banana-2.1、gemini-3.1-flash-image-preview。
+- 回归覆盖实际请求URL、原模型ID兼容、原生动态输入菜单及旧工作流显示值迁移，示例与说明同步更新。
+- 发布前71项Python测试、两个前端脚本、语法编译及git diff --check通过；候选文件凭据模式扫描未发现实际密钥，示例密钥为空。
+- 只读核对NTAPI公开模型目录：gemini-nano-banana-2.1已列出，公开支持Gemini generateContent接口。未完成真实生图测试，不能据此保证账户权限或全部参数兼容。
+
 ## 2026-10-07 简化 Seedance 2.5 模型菜单
 
 - 2.5节点下拉菜单现在只显示 `seedance2.5t2v`、`seedance2.5i2v`、`seedance2.5multi`，分别映射同名任务类型的 NTAPI Svideo 模型；standard/global 不再显示。

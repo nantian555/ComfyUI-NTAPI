@@ -67,6 +67,7 @@ Windows portable 用户也可以在便携版根目录执行：
 - 种子用于 ComfyUI 缓存控制，不发给图片 API，不保证相同种子复现。运行后控制采用 ComfyUI 原生 fixed/increment/decrement/randomize（固定/递增/递减/随机）；要重复提交相同提示词可选择随机。
 - 原 11 控件的 GPT 示例/工作流加载时会迁移参数位置。旧 standard/服务默认质量映射为 auto；旧 1536×1024 与 1024×1536 分别映射到 3:2/1k 与 2:3/1k，像素尺寸因此改为 1248×832 与 832×1248。旧自定义接口地址需改用 NTAPI_BASE_URL；重新检查模型和参数后运行。
 - Gemini 参数顺序：提示词、API秘钥、模型、比例、分辨率、输出格式、绕过代理、超时时间、种子、运行后控制。保留原生 generateContent 接口，去掉不支持的质量、风格、数量、返回格式；每次执行只提交一次，不追加风格提示词或多次请求。
+- Gemini 模型选项为 `NanobananaPro`、`Nanobanana2.1`、`Nanobanana2`，依次调用 `gemini-3-pro-image-preview`、`gemini-nano-banana-2.1`、`gemini-3.1-flash-image-preview`；旧工作流中的模型ID载入时转换为对应显示名称。
 - Gemini “自动”比例表示交由服务决定，分辨率使用 1K/2K/4K。输出格式 png/jpeg/webp 映射到 `generationConfig.imageConfig.imageOutputOptions.mimeType`；该字段按 ComfyUI 原生 Gemini 请求类型使用，NTAPI 与具体模型是否接受仍需实测。种子 0 不发送，正数发送；服务是否支持可复现以模型为准。超时时间用于请求与下载，默认 900 秒。
 - Gemini 保留 IMAGE 和“结果格式”STRING 两个输出；后者表示实际上游数据来源（inlineData/url），并非可选的返回格式。旧 9 控件工作流加载时会迁移密钥、比例、分辨率和种子位置；原接口根地址控件改用 NTAPI_BASE_URL。
 - 生图返回 URL、Base64 或 Gemini inlineData/fileData；图片批次尺寸不一致时，后续图片缩放至首张尺寸以组成 ComfyUI IMAGE 批次。输出为 RGB，无 MASK/透明通道。

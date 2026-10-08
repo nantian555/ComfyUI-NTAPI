@@ -1,6 +1,11 @@
 import { app } from "../../scripts/app.js";
 
 const imageNodes = new Set(["NTAPIOpenAIImageNode", "NTAPIGeminiImageNode"]);
+const geminiModelNames = new Map([
+    ["gemini-3-pro-image-preview", "NanobananaPro"],
+    ["gemini-nano-banana-2.1", "Nanobanana2.1"],
+    ["gemini-3.1-flash-image-preview", "Nanobanana2"],
+]);
 const dynamicReferences = new Set();
 let pendingReferences = [];
 
@@ -60,9 +65,14 @@ app.registerExtension({
             const result = configured?.apply(this, arguments);
             const old = info.widgets_values;
             if (nodeData.name === "NTAPIGeminiImageNode") {
-                if (!Array.isArray(old) || old.length !== 9) return result;
+                if (!Array.isArray(old) || old.length !== 9) {
+                    const model = this.widgets?.find(w => w.name === "模型");
+                    if (model) model.value = geminiModelNames.get(model.value) ?? model.value;
+                    return result;
+                }
                 const names = ["提示词", "API秘钥", "模型", "比例", "分辨率", "输出格式", "绕过代理", "超时时间", "种子", "control_after_generate"];
                 const values = [old[0], old[6], old[2] || old[1], old[4], old[3], "png", old[8], 900, old[5], "fixed"];
+                values[2] = geminiModelNames.get(values[2]) ?? values[2];
                 for (const [index, name] of names.entries()) {
                     const widget = this.widgets?.find(w => w.name === name);
                     if (widget) widget.value = values[index];

@@ -39,7 +39,7 @@ gemini.widgets=geminiNames.map(name=>({name,value:null}));
 gemini.inputs=[{name:'API密钥',widget:{name:'API密钥'}},{name:'图像比例',widget:{name:'图像比例'}}];
 gemini.onNodeCreated();
 gemini.onConfigure({widgets_values:['draw','gemini-3-pro-image-preview','','4K','16:9',123,'test-gemini-key','https://ntapi.org',false]});
-assert.deepEqual(gemini.widgets.map(w=>w.value),['draw','test-gemini-key','gemini-3-pro-image-preview','16:9','4K','png',false,900,123,'fixed']);
+assert.deepEqual(gemini.widgets.map(w=>w.value),['draw','test-gemini-key','NanobananaPro','16:9','4K','png',false,900,123,'fixed']);
 assert.equal(gemini.widgets.at(-1).label,'运行后控制');
 assert.equal(gemini.inputs[0].name,'API秘钥');
 assert.equal(gemini.inputs[1].name,'比例');
@@ -48,6 +48,14 @@ assert.equal(gemini.widgets.some(w=>['质量','数量','风格','返回格式'].
 const geminiBefore=gemini.widgets.map(w=>w.value);
 gemini.onConfigure({widgets_values:geminiBefore});
 assert.deepEqual(gemini.widgets.map(w=>w.value),geminiBefore);
+for (const [modelId, label] of [['gemini-3-pro-image-preview','NanobananaPro'],
+    ['gemini-nano-banana-2.1','Nanobanana2.1'],['gemini-3.1-flash-image-preview','Nanobanana2'],['custom-model','custom-model']]) {
+    const saved = [...geminiBefore];
+    saved[2] = modelId;
+    gemini.widgets.forEach((w,i)=>w.value=saved[i]);
+    gemini.onConfigure({widgets_values:saved});
+    assert.deepEqual(gemini.widgets.map(w=>w.value),saved.map((v,i)=>i===2?label:v));
+}
 console.log('Gemini layout, native-only fields and credential migration: OK');
 for (const type of ['NTAPIOpenAIImageNode','NTAPIGeminiImageNode']) {
 for (const count of [0,1,14]) {

@@ -180,10 +180,21 @@ class NodeTests(unittest.TestCase):
         inputs = nodes.NTAPIGeminiImageNode.INPUT_TYPES()['required']
         self.assertEqual(list(inputs), ['提示词','API秘钥','模型','比例','分辨率','输出格式','绕过代理','超时时间','种子'])
         self.assertTrue(inputs['种子'][1]['control_after_generate'])
-        self.assertEqual(inputs['模型'][0], nodes.GEMINI_IMAGE_MODELS)
+        self.assertEqual(inputs['模型'][0], ['NanobananaPro', 'Nanobanana2.1', 'Nanobanana2'])
         self.assertEqual(inputs['分辨率'][0], ['1K','2K','4K'])
         for field in ('质量','风格','数量','返回格式'):
             self.assertNotIn(field,inputs)
+
+    def test_gemini_model_aliases_and_legacy_ids(self):
+        body = {'candidates':[{'content':{'parts':[{'inlineData':{'data':B64}}]}}]}
+        for alias, model_id in [('NanobananaPro', 'gemini-3-pro-image-preview'),
+                                ('Nanobanana2.1', 'gemini-nano-banana-2.1'),
+                                ('Nanobanana2', 'gemini-3.1-flash-image-preview')]:
+            for selected in (alias, model_id):
+                with self.subTest(selected=selected), patch.object(nodes, '_request', return_value=response(body)) as send:
+                    self.run_image(nodes.NTAPIGeminiImageNode, **{'模型':selected})
+                    send.assert_called_once()
+                    self.assertTrue(send.call_args.args[1].endswith(f'/v1beta/models/{model_id}:generateContent'))
 
     def test_gemini_native_options_and_single_request(self):
         body = {'candidates':[{'content':{'parts':[{'inlineData':{'data':B64}}]}}]}

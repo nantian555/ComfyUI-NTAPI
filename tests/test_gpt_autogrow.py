@@ -16,6 +16,8 @@ class AutogrowTests(unittest.TestCase):
             cls = dynamic.NODE_CLASS_MAPPINGS[name]
             inputs = cls.INPUT_TYPES()
             self.assertEqual(list(inputs['required']), list(nodes.NODE_CLASS_MAPPINGS[name].INPUT_TYPES()['required']))
+            if name == 'NTAPIGeminiImageNode':
+                self.assertEqual(inputs['required']['模型'][1]['options'], ['NanobananaPro', 'Nanobanana2.1', 'Nanobanana2'])
             kind, options = inputs['optional']['参考图']
             self.assertEqual(kind, 'COMFY_AUTOGROW_V3')
             self.assertEqual(options['template']['names'], [f'参考图{i}' for i in range(1,15)])

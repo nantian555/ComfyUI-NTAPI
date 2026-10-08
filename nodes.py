@@ -26,7 +26,12 @@ CHAT_MODELS = [
 ]
 OPENAI_IMAGE_MODELS = ["gpt-image-2", "gpt-image-2-all", "gpt-image-2-2K", "gpt-image-2-4K",
                        "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]
-GEMINI_IMAGE_MODELS = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview"]
+GEMINI_IMAGE_MODEL_IDS = {
+    "NanobananaPro": "gemini-3-pro-image-preview",
+    "Nanobanana2.1": "gemini-nano-banana-2.1",
+    "Nanobanana2": "gemini-3.1-flash-image-preview",
+}
+GEMINI_IMAGE_MODELS = list(GEMINI_IMAGE_MODEL_IDS)
 IMAGE_RATIOS = ["auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"]
 IMAGE_RESOLUTIONS = ["1k", "2k", "4k"]
 IMAGE_QUALITIES = ["auto", "high", "medium", "low"]
@@ -431,6 +436,7 @@ class NTAPIGeminiImageNode:
             generation_config["seed"] = seed
         body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation_config}
         model_name = kwargs.get("模型") or _model(kwargs.get("模型预设") or GEMINI_IMAGE_MODELS[0], kwargs.get("自定义模型", ""))
+        model_name = GEMINI_IMAGE_MODEL_IDS.get(model_name, model_name)
         root_url = kwargs.get("接口根地址") or os.environ.get("NTAPI_BASE_URL") or DEFAULT_ROOT_URL
         timeout_sec = int(kwargs.get("超时时间", 900))
         bypass_proxy = bool(kwargs.get("绕过代理", True))
