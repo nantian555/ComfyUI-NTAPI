@@ -106,6 +106,55 @@ class NodeTests(unittest.TestCase):
                     self.assertNotIn(KEY, str(error.exception))
                     self.assertEqual(send.call_count, 1)
 
+    def test_completed_image_with_task_id(self):
+        for cls, body in (
+            (nodes.NTAPIOpenAIImageNode, {"data": [{"b64_json": B64}]}),
+            (nodes.NTAPIGeminiImageNode, {"candidates": [{"content": {"parts": [{"inlineData": {"data": B64}}]}}]}),
+        ):
+            with self.subTest(node=cls.__name__), patch.object(nodes, "_request", return_value=response(body | {"task_id": "completed-task"})) as send:
+                result = self.run_image(cls)
+                self.assertEqual(tuple(result[0].shape), (1, 8, 10, 3))
+                send.assert_called_once()
+
+    def test_image_with_task_id_url(self):
+        download = response({})
+        download._content = PNG
+        body = {"task_id": "completed-task", "data": [{"url": "/results/image.png"}]}
+        with patch.object(nodes, "_request", side_effect=[response(body), download]) as send:
+            image, = self.run_image()
+            self.assertEqual(tuple(image.shape), (1, 8, 10, 3))
+            self.assertEqual([call.args[0] for call in send.call_args_list], ["POST", "GET"])
+            self.assertEqual(send.call_args.args[1], "https://ntapi.org/results/image.png")
+            self.assertEqual(send.call_args.kwargs["headers"]["Authorization"], "Bearer " + KEY)
+
+    def test_reference_upload_uses_configured_timeout(self):
+        for cls, body in (
+            (nodes.NTAPIOpenAIImageNode, {"data": [{"b64_json": B64}]}),
+            (nodes.NTAPIGeminiImageNode, {"candidates": [{"content": {"parts": [{"inlineData": {"data": B64}}]}}]}),
+        ):
+            with self.subTest(node=cls.__name__), patch.object(nodes, "_request", return_value=response(body)) as send:
+                self.run_image(cls, **{"参考图1": torch.ones(1, 3, 4, 3), "超时时间": 900})
+                send.assert_called_once()
+                timeout = requests.adapters.TimeoutSauce.from_float(send.call_args.kwargs["timeout"])
+                self.assertEqual(timeout.connect_timeout, 900)
+                self.assertEqual(timeout.read_timeout, 900)
+
+    def test_image_transport_errors_are_specific_and_secret_safe(self):
+        cases = (
+            (requests.ConnectTimeout(KEY), "建立连接超时"),
+            (requests.ReadTimeout(KEY), "等待响应超时"),
+            (requests.exceptions.ProxyError(KEY), "代理"),
+            (requests.exceptions.SSLError(KEY), "TLS"),
+            (requests.ConnectionError(KEY), "连接中断"),
+        )
+        for cls in (nodes.NTAPIOpenAIImageNode, nodes.NTAPIGeminiImageNode):
+            for failure, message in cases:
+                with self.subTest(node=cls.__name__, error=type(failure).__name__), patch.object(nodes, "_request", side_effect=failure) as send:
+                    with self.assertRaisesRegex(RuntimeError, message) as error:
+                        self.run_image(cls)
+                    self.assertNotIn(KEY, str(error.exception))
+                    send.assert_called_once()
+
     def test_timeout_no_retry(self):
         with patch.object(nodes, "_request", side_effect=requests.Timeout(KEY)) as send:
             with self.assertRaises(RuntimeError) as error:
@@ -202,7 +251,7 @@ class NodeTests(unittest.TestCase):
             self.run_image(nodes.NTAPIGeminiImageNode, **{'API秘钥':KEY,'模型':'gemini-3.1-flash-image-preview','比例':'9:16','分辨率':'4K','输出格式':'jpeg','超时时间':333,'种子':42})
         self.assertEqual(send.call_count,1)
         self.assertEqual(send.call_args.args[1], 'https://example.org/v1beta/models/gemini-3.1-flash-image-preview:generateContent')
-        self.assertEqual(send.call_args.kwargs['timeout'],(30,333))
+        self.assertEqual(send.call_args.kwargs['timeout'],333)
         payload=send.call_args.kwargs['json']
         self.assertEqual(payload['contents'][0]['parts'][0]['text'],'draw')
         config=payload['generationConfig']
@@ -244,7 +293,7 @@ class NodeTests(unittest.TestCase):
                 self.assertEqual(fields['size'],'2160x3840')
                 self.assertEqual(fields['output_format'],'webp')
                 self.assertNotIn('seed',fields)
-                self.assertEqual(send.call_args.kwargs['timeout'],(30,321))
+                self.assertEqual(send.call_args.kwargs['timeout'],321)
 
     def test_gpt_download_timeout_and_environment_url(self):
         result = response({})

@@ -1,5 +1,12 @@
 # 本地发布检查记录
 
+## 2026-10-19 图像上游切换兼容修复
+
+- 现存三份 GPT 成功响应都同时包含 `data[].b64_json` 与 `task_id`，旧节点误判为未完成异步任务。现在优先读取已返回的图片，只有任务信息而没有图片时仍停止，避免重复提交。
+- 两次 NanobananaPro 失败请求在本机约 31.6 秒结束；服务端对应请求分别约 29.99 / 30.00 秒返回 HTTP 400，错误为 `unexpected EOF`。节点配置的 900 秒原本只用于读取响应，上传仍受 30 秒连接超时限制。两种图片节点现在将配置时间同时用于连接、上传和读取；不改变图片分辨率或内容。
+- 75 项 Python 测试及两个前端脚本通过；回归覆盖带任务 ID 的图片内容/地址、未完成任务拒绝、上传超时设置、错误分类和密钥隐藏。
+- 六个模型的已有真实响应离线回放均成功：三个 GPT-image 和三个 Gemini/Nanobanana 模型。本轮新增付费请求 0 次，尚未验证修复后的真实远程参考图上传和生成。
+
 ## 2026-10-08 Gemini 模型名称与 Nanobanana2.1 映射
 
 - 模型菜单依次为NanobananaPro、Nanobanana2.1、Nanobanana2，分别调用gemini-3-pro-image-preview、gemini-nano-banana-2.1、gemini-3.1-flash-image-preview。

@@ -93,6 +93,22 @@ def _model(preset: str, custom: str) -> str:
     return custom.strip() or preset.strip()
 
 
+def _image_request_error(error: requests.RequestException) -> RuntimeError:
+    if isinstance(error, requests.ConnectTimeout):
+        reason = "建立连接超时，请检查网络和接口地址"
+    elif isinstance(error, requests.ReadTimeout):
+        reason = "等待响应超时，请检查服务控制台与节点超时时间"
+    elif isinstance(error, requests.exceptions.ProxyError):
+        reason = "代理连接失败，请检查“绕过代理”设置"
+    elif isinstance(error, requests.exceptions.SSLError):
+        reason = "TLS 连接失败，请检查证书、系统时间和代理"
+    elif isinstance(error, requests.ConnectionError):
+        reason = "连接中断，请检查网络和服务状态"
+    else:
+        reason = "请求失败或超时，请检查服务控制台"
+    return RuntimeError(f"NTAPI：{reason}；未自动重试，请先核对已有任务，避免重复扣费。")
+
+
 def _json_response(response: requests.Response) -> Any:
     if not 200 <= response.status_code < 300:
         raise RuntimeError(f"NTAPI：HTTP {response.status_code}，请检查接口地址、密钥权限、余额和服务状态。")
@@ -104,7 +120,7 @@ def _json_response(response: requests.Response) -> Any:
         raise RuntimeError("NTAPI：上游返回格式错误，预期 JSON 对象。")
     if body.get("error"):
         raise RuntimeError("NTAPI：上游报告错误，请在服务控制台查看请求记录。")
-    if body.get("task_id") or body.get("status") in {"queued", "pending", "processing", "running"}:
+    if (body.get("task_id") or body.get("status") in {"queued", "pending", "processing", "running"}) and not next(_walk_image_values(body), None):
         raise RuntimeError("NTAPI：收到异步任务，本版只支持同步结果。请在服务控制台查询任务，避免重复提交。")
     return body
 
@@ -334,7 +350,7 @@ class NTAPIOpenAIImageNode:
                 "输出格式": (IMAGE_OUTPUT_FORMATS, {"default": "png"}),
                 "返回格式": (IMAGE_RESPONSE_FORMATS, {"default": "url"}),
                 "绕过代理": ("BOOLEAN", {"default": True}),
-                "超时时间": ("INT", {"default": 900, "min": 60, "max": 1200, "tooltip": "秒；单次生成请求或结果图片下载的等待时间，不会自动重试。"}),
+                "超时时间": ("INT", {"default": 900, "min": 60, "max": 1200, "tooltip": "秒；用于连接、参考图上传、生成等待及结果图片下载，不自动重试。"}),
                 "种子": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True,
                                   "tooltip": "用于 ComfyUI 缓存及运行后控制，不发送给图片接口，不保证相同种子复现。"}),
             },
@@ -355,6 +371,7 @@ class NTAPIOpenAIImageNode:
         base_url = (kwargs.get("接口地址") or os.environ.get("NTAPI_BASE_URL") or DEFAULT_V1_URL).strip().rstrip("/")
         model_name = kwargs.get("模型") or _model(kwargs.get("模型预设") or OPENAI_IMAGE_MODELS[0], kwargs.get("自定义模型", ""))
         timeout_sec = int(kwargs.get("超时时间", 900))
+        # requests also uses the connection timeout while uploading reference images.
         fields = {
             "model": model_name,
             "prompt": prompt,
@@ -373,18 +390,18 @@ class NTAPIOpenAIImageNode:
                          for i, image in enumerate(refs, 1)]
                 response = _request(
                     "POST", base_url + "/images/edits", bypass_proxy,
-                    headers=_headers(api_key, json_body=False), data={key: str(value) for key, value in fields.items()}, files=files, timeout=(min(30, timeout_sec), timeout_sec)
+                    headers=_headers(api_key, json_body=False), data={key: str(value) for key, value in fields.items()}, files=files, timeout=timeout_sec
                 )
             else:
                 response = _request(
                     "POST", base_url + "/images/generations", bypass_proxy,
-                    headers=_headers(api_key), json=fields, timeout=(min(30, timeout_sec), timeout_sec)
+                    headers=_headers(api_key), json=fields, timeout=timeout_sec
                 )
             body = _json_response(response)
             images = _decode_image_candidates(body, base_url, api_key, bypass_proxy, timeout_sec)
             return (_stack_images(images),)
-        except requests.RequestException:
-            raise RuntimeError("NTAPI：生图请求失败或超时，请检查服务控制台；请勿立即重复提交。") from None
+        except requests.RequestException as error:
+            raise _image_request_error(error) from None
 
 
 class NTAPIGeminiImageNode:
@@ -399,7 +416,7 @@ class NTAPIGeminiImageNode:
                 "分辨率": (GEMINI_SIZES, {"default": "2K"}),
                 "输出格式": (IMAGE_OUTPUT_FORMATS, {"default": "png", "tooltip": "请求 Gemini 的输出 MIME 格式；实际支持情况以模型服务为准。"}),
                 "绕过代理": ("BOOLEAN", {"default": True}),
-                "超时时间": ("INT", {"default": 900, "min": 60, "max": 1200, "tooltip": "秒；用于请求与结果图片下载，不自动重试。"}),
+                "超时时间": ("INT", {"default": 900, "min": 60, "max": 1200, "tooltip": "秒；用于连接、参考图上传、生成等待及结果图片下载，不自动重试。"}),
                 "种子": ("INT", {"default": 0, "min": 0, "max": 2147483647, "control_after_generate": True,
                                   "tooltip": "0 不发送种子；正数发送给 Gemini。可复现性取决于服务支持。"}),
             },
@@ -443,7 +460,7 @@ class NTAPIGeminiImageNode:
         try:
             response = _request(
                 "POST", _gemini_url(root_url, model_name), bypass_proxy,
-                headers=_headers(api_key), json=body, timeout=(min(30, timeout_sec), timeout_sec)
+                headers=_headers(api_key), json=body, timeout=timeout_sec
             )
             payload = _json_response(response)
             images = _decode_image_candidates(payload, root_url, api_key, bypass_proxy, timeout_sec)
@@ -453,8 +470,8 @@ class NTAPIGeminiImageNode:
                 for part in (candidate.get("content", {}).get("parts", []) if isinstance(candidate.get("content"), dict) else [])
             ) else "url"
             return (_stack_images(images), result_format)
-        except requests.RequestException:
-            raise RuntimeError("NTAPI：Gemini 请求失败或超时，请检查服务控制台；请勿立即重复提交。") from None
+        except requests.RequestException as error:
+            raise _image_request_error(error) from None
 
 
 NODE_CLASS_MAPPINGS = {

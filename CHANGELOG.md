@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.2.0a2 — 2026-10-19
 
+- 修复 GPT 图片响应带有 task_id 时被误判为未完成异步任务的问题，直接读取已经返回的图片。
+- GPT/Gemini 参考图上传使用节点设定的超时时间，移除隐藏的 30 秒上传限制；连接、等待响应、代理及 TLS 故障分别提示，付费提交不自动重试。
 - Gemini 生图模型菜单改为 NanobananaPro、Nanobanana2.1、Nanobanana2，增加 gemini-nano-banana-2.1 映射并迁移旧显示值。
 - 简化 Seedance 2.5 模型菜单为 `seedance2.5t2v`、`seedance2.5i2v`、`seedance2.5multi`；兼容旧 standard/global 工作流值。
 
