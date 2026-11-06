@@ -25,7 +25,8 @@ CHAT_MODELS = [
     "gemini-3.7-flash",
 ]
 OPENAI_IMAGE_MODELS = ["gpt-image-2", "gpt-image-2-all", "gpt-image-2-2K", "gpt-image-2-4K",
-                       "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]
+                       "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+                       "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"]
 GEMINI_IMAGE_MODEL_IDS = {
     "NanobananaPro": "gemini-3-pro-image-preview",
     "Nanobanana2.1": "gemini-nano-banana-2.1",
