@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0a4 — 2026-11-26
+
+- 三款香蕉模型改用 NTAPI 当前的 `/v1/chat/completions`。比例与分辨率通过请求顶层 `image_config` 传递，参考图放入 `messages` 的 `image_url`。
+- 兼容 CDN 图片链接、内嵌 Base64、聊天消息图片字段和旧 Gemini 图片响应。保留原有工作流的节点、参数位置和参考图连线。
+
 ## 0.2.0a3 — 2026-11-06
 
 - GPT 生图模型菜单新增 `gpt-image-2.6-flare` 和 `gpt-image-2.6-sunburst`，通过 NTAPI 调用对应的 SUBAPI 上游资源，沿用文生图与参考图编辑接口。

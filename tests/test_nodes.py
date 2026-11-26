@@ -88,10 +88,44 @@ class NodeTests(unittest.TestCase):
                 image, source = self.run_image(nodes.NTAPIGeminiImageNode, **{"接口根地址": "https://ntapi.org/v1", "比例": "16:9", "种子": 42})
                 self.assertEqual(tuple(image.shape), (1, 8, 10, 3))
                 self.assertEqual(source, "inlineData")
-                self.assertIn("/v1beta/models/gemini-3-pro-image-preview:generateContent", send.call_args.args[1])
-                config = send.call_args.kwargs["json"]["generationConfig"]
-                self.assertEqual(config["imageConfig"]["aspectRatio"], "16:9")
-                self.assertEqual(config["seed"], 42)
+                self.assertEqual(send.call_args.args[1], "https://ntapi.org/v1/chat/completions")
+                self.assertEqual(send.call_args.kwargs["json"]["image_config"]["aspect_ratio"], "16:9")
+
+    def test_gemini_chat_image_results(self):
+        data_uri = "data:image/png;base64," + B64
+        wrapped = data_uri[:55] + "\r\n" + data_uri[55:]
+        cdn = "https://cdn.example.org/result.png?signature=fixture"
+        cases = (
+            ({"data": {"url": cdn}}, cdn),
+            ({"data": [{"url": cdn}]}, cdn),
+            ({"choices": [{"message": {"images": [{"image_url": {"url": cdn}}]}}]}, cdn),
+            ({"choices": [{"message": {"content": [{"type": "image_url", "image_url": {"url": data_uri}}]}}]}, None),
+            ({"choices": [{"message": {"content": cdn}}]}, cdn),
+            ({"choices": [{"message": {"content": data_uri}}]}, None),
+            ({"choices": [{"message": {"content": f"结果 ![image](<{wrapped}>)"}}]}, None),
+            ({"choices": [{"message": {"content": f"![image]({cdn})"}, "finish_reason": "stop"}]}, cdn),
+        )
+        for body, url in cases:
+            download = response({})
+            download._content = PNG
+            with self.subTest(body=list(body), url=url), patch.object(nodes, "_request", side_effect=[response(body | {"task_id": "completed"}), download]) as send:
+                image, source = self.run_image(nodes.NTAPIGeminiImageNode)
+                self.assertEqual(tuple(image.shape), (1, 8, 10, 3))
+                self.assertEqual(source, "url" if url else "inlineData")
+                self.assertEqual([call.args[0] for call in send.call_args_list], ["POST", "GET"] if url else ["POST"])
+                if url:
+                    self.assertEqual(send.call_args.args[1], url)
+                    self.assertNotIn("Authorization", send.call_args.kwargs["headers"])
+
+    def test_gemini_ignores_thought_and_non_image_parts(self):
+        body = {"candidates": [{"content": {"parts": [
+            {"thought": True, "inlineData": {"data": B64}},
+            {"fileData": {"fileUri": "https://cdn.example.org/audio", "mimeType": "audio/wav"}},
+        ]}}], "choices": [{"message": {"content": "Details at https://example.org/help"}}]}
+        with patch.object(nodes, "_request", return_value=response(body)) as send:
+            with self.assertRaisesRegex(RuntimeError, "没有图片"):
+                self.run_image(nodes.NTAPIGeminiImageNode)
+            send.assert_called_once()
 
     def test_failures_raise_without_secret(self):
         bodies = [response({"error": {"message": KEY}}, 401), response({"error": {"message": KEY}}), response({"data": []}), response({"data": [{"b64_json": "invalid"}]}), response({"task_id": "queued-task", "status": "processing"})]
@@ -186,16 +220,16 @@ class NodeTests(unittest.TestCase):
             result = response({})
             result._content = PNG
             with self.subTest(url=url), patch.object(nodes, "_request", return_value=result) as send:
-                nodes._decode_image_candidates({"data": [{"url": url}]}, "https://ntapi.org/v1", KEY, True)
+                nodes._decode_image_values([("url", url)], "https://ntapi.org/v1", KEY, True)
                 self.assertEqual("Authorization" in send.call_args.kwargs["headers"], auth)
 
     def test_metadata_not_downloaded(self):
         with patch.object(nodes, "_request") as send:
-            nodes._decode_image_candidates({"documentation_url": "https://example.org/help", "data": [{"b64_json": B64}]}, nodes.DEFAULT_V1_URL, KEY, True)
+            nodes._decode_image_values(nodes._walk_image_values({"documentation_url": "https://example.org/help", "data": [{"b64_json": B64}]}), nodes.DEFAULT_V1_URL, KEY, True)
             send.assert_not_called()
 
     def test_data_uri(self):
-        images = nodes._decode_image_candidates({"data": [{"url": "data:image/png;base64," + B64}, {"b64_json": B64}]}, nodes.DEFAULT_V1_URL, KEY, True)
+        images = nodes._decode_image_values([("url", "data:image/png;base64," + B64), ("base64", B64)], nodes.DEFAULT_V1_URL, KEY, True)
         self.assertEqual(len(images), 2)
 
     def test_example_workflows(self):
@@ -243,30 +277,45 @@ class NodeTests(unittest.TestCase):
                 with self.subTest(selected=selected), patch.object(nodes, '_request', return_value=response(body)) as send:
                     self.run_image(nodes.NTAPIGeminiImageNode, **{'模型':selected})
                     send.assert_called_once()
-                    self.assertTrue(send.call_args.args[1].endswith(f'/v1beta/models/{model_id}:generateContent'))
+                    self.assertTrue(send.call_args.args[1].endswith('/v1/chat/completions'))
+                    self.assertEqual(send.call_args.kwargs['json']['model'], model_id)
 
-    def test_gemini_native_options_and_single_request(self):
-        body = {'candidates':[{'content':{'parts':[{'inlineData':{'data':B64}}]}}]}
-        with patch.dict(os.environ, {'NTAPI_BASE_URL':'https://example.org/v1'}), patch.object(nodes,'_request',return_value=response(body)) as send:
-            self.run_image(nodes.NTAPIGeminiImageNode, **{'API秘钥':KEY,'模型':'gemini-3.1-flash-image-preview','比例':'9:16','分辨率':'4K','输出格式':'jpeg','超时时间':333,'种子':42})
-        self.assertEqual(send.call_count,1)
-        self.assertEqual(send.call_args.args[1], 'https://example.org/v1beta/models/gemini-3.1-flash-image-preview:generateContent')
-        self.assertEqual(send.call_args.kwargs['timeout'],333)
-        payload=send.call_args.kwargs['json']
-        self.assertEqual(payload['contents'][0]['parts'][0]['text'],'draw')
-        config=payload['generationConfig']
-        self.assertEqual(config['imageConfig'], {'aspectRatio':'9:16','imageSize':'4K','imageOutputOptions':{'mimeType':'image/jpeg'}})
-        self.assertEqual(config['seed'],42)
-        self.assertNotIn('style',payload)
-        self.assertNotIn('n',payload)
+    def test_gemini_chat_options_and_reference_images(self):
+        body = {"data": [{"b64_json": B64}]}
+        with patch.dict(os.environ, {'NTAPI_BASE_URL': 'https://example.org/v1beta/'}), patch.object(nodes, '_request', return_value=response(body)) as send:
+            self.run_image(nodes.NTAPIGeminiImageNode, **{
+                '模型': 'Nanobanana2', '比例': '9:16', '分辨率': '4K',
+                '输出格式': 'jpeg', '超时时间': 333, '种子': 42,
+                '参考图1': torch.ones(1, 3, 4, 3), '参考图2': torch.zeros(1, 3, 4, 3),
+            })
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args[1], 'https://example.org/v1/chat/completions')
+        self.assertEqual(send.call_args.kwargs['timeout'], 333)
+        payload = send.call_args.kwargs['json']
+        self.assertEqual(payload, {
+            'model': 'gemini-3.1-flash-image-preview',
+            'messages': [{'role': 'user', 'content': [
+                {'type': 'text', 'text': 'draw'},
+                {'type': 'image_url', 'image_url': {'url': nodes._data_url(torch.ones(3, 4, 3))}},
+                {'type': 'image_url', 'image_url': {'url': nodes._data_url(torch.zeros(3, 4, 3))}},
+            ]}],
+            'stream': False, 'modalities': ['text', 'image'],
+            'image_config': {'aspect_ratio': '9:16', 'image_size': '4K'},
+        })
 
-    def test_gemini_zero_seed_auto_ratio(self):
-        body={'candidates':[{'content':{'parts':[{'inline_data':{'data':B64}}]}}]}
-        with patch.object(nodes,'_request',return_value=response(body)) as send:
+    def test_gemini_auto_ratio_omitted(self):
+        with patch.object(nodes, '_request', return_value=response({'data': [{'b64_json': B64}]})) as send:
             self.run_image(nodes.NTAPIGeminiImageNode)
-        config=send.call_args.kwargs['json']['generationConfig']
-        self.assertNotIn('seed',config)
-        self.assertNotIn('aspectRatio',config['imageConfig'])
+        self.assertEqual(send.call_args.kwargs['json']['image_config'], {'image_size': '2K'})
+
+    def test_custom_gemini_model_keeps_native_protocol(self):
+        body = {'candidates': [{'content': {'parts': [{'inline_data': {'data': B64}}]}}]}
+        with patch.object(nodes, '_request', return_value=response(body)) as send:
+            self.run_image(nodes.NTAPIGeminiImageNode, **{'模型': 'gemini-custom', '种子': 42, '输出格式': 'jpeg'})
+        self.assertTrue(send.call_args.args[1].endswith('/v1beta/models/gemini-custom:generateContent'))
+        config = send.call_args.kwargs['json']['generationConfig']
+        self.assertEqual(config['seed'], 42)
+        self.assertEqual(config['imageConfig']['imageOutputOptions'], {'mimeType': 'image/jpeg'})
 
     def test_gpt_dimensions_and_auto(self):
         self.assertEqual(nodes._image_size('1:1','4k'), '2880x2880')

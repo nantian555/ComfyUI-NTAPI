@@ -177,24 +177,66 @@ def _stack_images(images: List[torch.Tensor]) -> torch.Tensor:
     return torch.cat(normalized, dim=0)
 
 
+def _records(value: Any) -> Iterable[dict]:
+    if isinstance(value, list):
+        yield from (entry for entry in value if isinstance(entry, dict))
+
+
+def _markdown_image_urls(text: Any) -> Iterable[str]:
+    if isinstance(text, str):
+        yield from re.findall(
+            r"!\[[^\]]*\]\(\s*<?((?:https?://[^\s)>]+|data:image/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=\r\n]+))>?\s*\)",
+            text,
+        )
+
+
 def _walk_image_values(body: dict) -> Iterable[Tuple[str, str]]:
-    for item in body.get("data", []):
-        if item.get("b64_json"):
+    data = body.get("data")
+    for item in (data,) if isinstance(data, dict) else _records(data):
+        if isinstance(item.get("b64_json"), str) and item["b64_json"].strip():
             yield "base64", item["b64_json"]
-        elif item.get("url"):
+        elif isinstance(item.get("url"), str) and item["url"].strip():
             yield "url", item["url"]
-    for candidate in body.get("candidates", []):
-        for part in candidate.get("content", {}).get("parts", []):
+    for candidate in _records(body.get("candidates")):
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            continue
+        for part in _records(content.get("parts")):
+            if part.get("thought") is True:
+                continue
             inline = part.get("inlineData") or part.get("inline_data")
-            if inline and inline.get("data"):
-                yield "base64", inline["data"]
-            file_data = part.get("fileData") or part.get("file_data") or {}
-            url = file_data.get("fileUri") or file_data.get("file_uri")
-            if url:
+            if isinstance(inline, dict):
+                mime = inline.get("mimeType") or inline.get("mime_type") or "image/png"
+                value = inline.get("data")
+                if isinstance(mime, str) and mime.startswith("image/") and isinstance(value, str) and value.strip():
+                    yield "base64", value
+            file_data = part.get("fileData") or part.get("file_data")
+            if isinstance(file_data, dict):
+                mime = file_data.get("mimeType") or file_data.get("mime_type") or "image/png"
+                url = file_data.get("fileUri") or file_data.get("file_uri")
+                if isinstance(mime, str) and mime.startswith("image/") and isinstance(url, str) and url.strip():
+                    yield "url", url
+            for url in _markdown_image_urls(part.get("text")):
                 yield "url", url
-            # Only explicit Markdown image links, not arbitrary prose links.
-            for url in re.findall(r"!\[[^\]]*\]\((https?://[^\s)]+)\)", part.get("text", "")):
+    for choice in _records(body.get("choices")):
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content.strip()
+            if re.fullmatch(r"https?://[^\s<>]+|data:image/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=\r\n]+", text):
+                yield "url", text
+            for url in _markdown_image_urls(text):
                 yield "url", url
+        for parts in (content, message.get("images")):
+            for part in _records(parts):
+                image_url = part.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if isinstance(url, str) and url.strip():
+                    yield "url", url
+                elif isinstance(part.get("b64_json"), str) and part["b64_json"].strip():
+                    yield "base64", part["b64_json"]
 
 
 def _origin(url: str) -> tuple:
@@ -202,10 +244,10 @@ def _origin(url: str) -> tuple:
     return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
 
 
-def _decode_image_candidates(body: Any, base_url: str, api_key: str, bypass_proxy: bool, timeout_sec: int = 120) -> List[torch.Tensor]:
+def _decode_image_values(values: Iterable[Tuple[str, str]], base_url: str, api_key: str, bypass_proxy: bool, timeout_sec: int = 120) -> List[torch.Tensor]:
     images: List[torch.Tensor] = []
     base = base_url.rstrip("/") + "/"
-    for kind, value in _walk_image_values(body):
+    for kind, value in values:
         value = value.strip()
         try:
             if kind == "url" and not value.startswith("data:"):
@@ -219,7 +261,7 @@ def _decode_image_candidates(body: Any, base_url: str, api_key: str, bypass_prox
                 images.append(_pil_to_tensor(Image.open(io.BytesIO(response.content))))
             else:
                 encoded = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
-                raw = base64.b64decode(encoded, validate=True)
+                raw = base64.b64decode(encoded.replace("\r", "").replace("\n", ""), validate=True)
                 images.append(_pil_to_tensor(Image.open(io.BytesIO(raw))))
         except (OSError, ValueError, requests.RequestException):
             raise RuntimeError("NTAPI：图片下载或解码失败，请在控制台检查结果。") from None
@@ -399,7 +441,7 @@ class NTAPIOpenAIImageNode:
                     headers=_headers(api_key), json=fields, timeout=timeout_sec
                 )
             body = _json_response(response)
-            images = _decode_image_candidates(body, base_url, api_key, bypass_proxy, timeout_sec)
+            images = _decode_image_values(_walk_image_values(body), base_url, api_key, bypass_proxy, timeout_sec)
             return (_stack_images(images),)
         except requests.RequestException as error:
             raise _image_request_error(error) from None
@@ -415,11 +457,11 @@ class NTAPIGeminiImageNode:
                 "模型": (GEMINI_IMAGE_MODELS, {"default": GEMINI_IMAGE_MODELS[0]}),
                 "比例": (GEMINI_RATIOS, {"default": "自动"}),
                 "分辨率": (GEMINI_SIZES, {"default": "2K"}),
-                "输出格式": (IMAGE_OUTPUT_FORMATS, {"default": "png", "tooltip": "请求 Gemini 的输出 MIME 格式；实际支持情况以模型服务为准。"}),
+                "输出格式": (IMAGE_OUTPUT_FORMATS, {"default": "png", "tooltip": "仅旧版原生 Gemini 接口使用此设置；香蕉模型由上游决定返回格式。"}),
                 "绕过代理": ("BOOLEAN", {"default": True}),
                 "超时时间": ("INT", {"default": 900, "min": 60, "max": 1200, "tooltip": "秒；用于连接、参考图上传、生成等待及结果图片下载，不自动重试。"}),
                 "种子": ("INT", {"default": 0, "min": 0, "max": 2147483647, "control_after_generate": True,
-                                  "tooltip": "0 不发送种子；正数发送给 Gemini。可复现性取决于服务支持。"}),
+                                  "tooltip": "香蕉模型仅用于缓存与运行后控制；旧版原生 Gemini 接口仍发送正数种子。"}),
             },
             "optional": {f"参考图{i}": ("IMAGE",) for i in range(1, 15)},
         }
@@ -435,40 +477,57 @@ class NTAPIGeminiImageNode:
         refs = _reference_frames(kwargs)
         if not prompt and not refs:
             raise RuntimeError("NTAPI：提示词或参考图不能为空。")
-        parts: List[Dict[str, Any]] = [{"text": prompt or "请根据参考图生成图像。"}]
-        parts.extend({"inlineData": _inline_data(image)} for image in refs)
-        generation_config: Dict[str, Any] = {
-            "responseModalities": ["IMAGE"],
-            "imageConfig": {
-                "imageSize": kwargs.get("分辨率", kwargs.get("图像尺寸", "2K")),
-                "imageOutputOptions": {"mimeType": {
-                    "png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"
-                }.get(kwargs.get("输出格式", "png"), "image/png")},
-            },
-        }
-        ratio = _gemini_ratio(kwargs.get("比例", kwargs.get("图像比例", "自动")))
-        if ratio:
-            generation_config["imageConfig"]["aspectRatio"] = ratio
-        seed = int(kwargs.get("种子", 0) or 0)
-        if seed > 0:
-            generation_config["seed"] = seed
-        body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation_config}
+        prompt = prompt or "请根据参考图生成图像。"
         model_name = kwargs.get("模型") or _model(kwargs.get("模型预设") or GEMINI_IMAGE_MODELS[0], kwargs.get("自定义模型", ""))
         model_name = GEMINI_IMAGE_MODEL_IDS.get(model_name, model_name)
-        root_url = kwargs.get("接口根地址") or os.environ.get("NTAPI_BASE_URL") or DEFAULT_ROOT_URL
+        root_url = (kwargs.get("接口根地址") or os.environ.get("NTAPI_BASE_URL") or DEFAULT_ROOT_URL).strip().rstrip("/")
+        resolution = kwargs.get("分辨率", kwargs.get("图像尺寸", "2K"))
+        ratio = _gemini_ratio(kwargs.get("比例", kwargs.get("图像比例", "自动")))
+        if model_name in GEMINI_IMAGE_MODEL_IDS.values():
+            content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+            content.extend({"type": "image_url", "image_url": {"url": _data_url(image)}} for image in refs)
+            image_config = {"image_size": resolution}
+            if ratio:
+                image_config["aspect_ratio"] = ratio
+            body = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": content}],
+                "stream": False,
+                "modalities": ["text", "image"],
+                "image_config": image_config,
+            }
+            endpoint = re.sub(r"/v1(?:beta)?$", "", root_url, flags=re.IGNORECASE) + "/v1/chat/completions"
+        else:
+            parts = [{"text": prompt}]
+            parts.extend({"inlineData": _inline_data(image)} for image in refs)
+            generation_config = {
+                "responseModalities": ["IMAGE"],
+                "imageConfig": {
+                    "imageSize": resolution,
+                    "imageOutputOptions": {"mimeType": {
+                        "png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"
+                    }.get(kwargs.get("输出格式", "png"), "image/png")},
+                },
+            }
+            if ratio:
+                generation_config["imageConfig"]["aspectRatio"] = ratio
+            seed = int(kwargs.get("种子", 0) or 0)
+            if seed > 0:
+                generation_config["seed"] = seed
+            body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation_config}
+            endpoint = _gemini_url(root_url, model_name)
         timeout_sec = int(kwargs.get("超时时间", 900))
         bypass_proxy = bool(kwargs.get("绕过代理", True))
         try:
             response = _request(
-                "POST", _gemini_url(root_url, model_name), bypass_proxy,
+                "POST", endpoint, bypass_proxy,
                 headers=_headers(api_key), json=body, timeout=timeout_sec
             )
             payload = _json_response(response)
-            images = _decode_image_candidates(payload, root_url, api_key, bypass_proxy, timeout_sec)
+            values = list(dict.fromkeys(_walk_image_values(payload)))
+            images = _decode_image_values(values, root_url, api_key, bypass_proxy, timeout_sec)
             result_format = "inlineData" if any(
-                isinstance(part, dict) and ("inlineData" in part or "inline_data" in part)
-                for candidate in payload.get("candidates", []) if isinstance(candidate, dict)
-                for part in (candidate.get("content", {}).get("parts", []) if isinstance(candidate.get("content"), dict) else [])
+                kind == "base64" or value.strip().startswith("data:image/") for kind, value in values
             ) else "url"
             return (_stack_images(images), result_format)
         except requests.RequestException as error:

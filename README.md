@@ -2,7 +2,7 @@
 
 在 ComfyUI 中调用 NTAPI 的语言、GPT 图片与 Gemini 图片接口，并提供视频兼容节点。中文参数、参考图输入，可自定义模型与接入地址。
 
-**状态：`0.2.0a3` 公开预览版。** 新增 GPT-image2.6 两款模型。已通过 75 项本地 Python 测试和两款模型的文生图、参考图编辑请求模拟检查；本次未进行 GPT-image2.6 付费生成验证。视频接口使用兼容协议，详见 [视频说明](docs/VIDEO.md) 和 [验证记录](docs/VALIDATION.md)。模型下拉框是公开模型目录的快照，不代表账户拥有权限或全部参数均可用。本插件并非 NTAPI 官方产品。
+**状态：`0.2.0a4` 公开预览版。** 本版更新三款香蕉模型的调用与图片解析。78 项 Python 回归和两个前端测试通过。验证使用模拟请求，本次实际付费出图未验证。 使用说明见下文，验证范围见[验证记录](docs/VALIDATION.md)。本插件并非 NTAPI 官方产品。
 
 ![节点连接示意（非运行截图）](docs/images/connections.svg)
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | NTAPI-语言模型 | 文字与参考图理解 | `/v1/chat/completions` | STRING |
 | NTAPI-GPT生图 | 文生图、参考图编辑 | `/v1/images/generations` / `/v1/images/edits` | IMAGE |
-| NTAPI-Gemini生图 | Gemini 原生生图 | `/v1beta/models/{model}:generateContent` | IMAGE、结果格式 |
+| NTAPI-Gemini生图 | 香蕉文生图、参考图生成 | `/v1/chat/completions` | IMAGE、结果格式 |
 | NTAPI-视频生成（兼容模式） | 文生、图生、首尾帧、多参考图 | `/v1/videos` | 任务ID |
 | NTAPI-视频编辑（兼容模式） | 原生 VIDEO 上传或视频 URL 编辑 | `/v1/videos` | 任务ID |
 | NTAPI-视频任务获取 | 轮询、下载、续取结果 | `/v1/videos/{id}` | VIDEO、视频URL |
@@ -48,7 +48,7 @@ Windows portable 用户也可以在便携版根目录执行：
 
 **节点内填写的密钥可能保存在工作流 JSON、历史记录和输出图片的工作流元数据中。** 分享前请清空密钥；已经泄露的密钥应在服务控制台撤销。`.gitignore` 不能自动清除已写入工作流的密钥。本插件不自动读取 `.env` 文件。
 
-语言/GPT 默认接入地址为 `https://ntapi.org/v1`；Gemini 的默认根地址为 `https://ntapi.org`。GPT/Gemini 生图不再显示接口地址控件，需要覆盖时在启动环境设置 `NTAPI_BASE_URL`（例如包含 `/v1` 的接入地址）；其他节点仍在节点中填写地址。首页另有 `https://api.ntapi.org/v1` 示例，请以账户控制台给出的有效地址为准；插件不会自动切换域名。Gemini 会去除地址末尾的 `/v1` 或 `/v1beta` 再构造原生接口路径。
+语言/GPT 默认接入地址为 `https://ntapi.org/v1`；Gemini 的默认根地址为 `https://ntapi.org`。GPT/Gemini 生图不再显示接口地址控件，需要覆盖时在启动环境设置 `NTAPI_BASE_URL`（例如包含 `/v1` 的接入地址）；其他节点仍在节点中填写地址。首页另有 `https://api.ntapi.org/v1` 示例，请以账户控制台给出的有效地址为准；插件不会自动切换域名。Gemini 会去除地址末尾的 `/v1` 或 `/v1beta` 再构造对应接口路径。
 
 远程携带密钥的请求必须使用 HTTPS；允许 localhost HTTP 用于本地测试。图片下载只对同源地址（协议、主机、端口均相同）发送密钥。请求不跟随重定向；请填写最终接口或图片直链。
 
@@ -67,10 +67,10 @@ Windows portable 用户也可以在便携版根目录执行：
 - 超时时间默认 900 秒，范围 60–1200 秒，应用于连接、参考图上传、生成请求的读取等待和每张结果图片下载，不自动重试。
 - 种子用于 ComfyUI 缓存控制，不发给图片 API，不保证相同种子复现。运行后控制采用 ComfyUI 原生 fixed/increment/decrement/randomize（固定/递增/递减/随机）；要重复提交相同提示词可选择随机。
 - 原 11 控件的 GPT 示例/工作流加载时会迁移参数位置。旧 standard/服务默认质量映射为 auto；旧 1536×1024 与 1024×1536 分别映射到 3:2/1k 与 2:3/1k，像素尺寸因此改为 1248×832 与 832×1248。旧自定义接口地址需改用 NTAPI_BASE_URL；重新检查模型和参数后运行。
-- Gemini 参数顺序：提示词、API秘钥、模型、比例、分辨率、输出格式、绕过代理、超时时间、种子、运行后控制。保留原生 generateContent 接口，去掉不支持的质量、风格、数量、返回格式；每次执行只提交一次，不追加风格提示词或多次请求。
+- Gemini 参数顺序：提示词、API秘钥、模型、比例、分辨率、输出格式、绕过代理、超时时间、种子、运行后控制。三款香蕉模型通过 `/v1/chat/completions` 提交，参考图放入 `messages` 的 `image_url` 内容。每次执行只提交一次。
 - Gemini 模型选项为 `NanobananaPro`、`Nanobanana2.1`、`Nanobanana2`，依次调用 `gemini-3-pro-image-preview`、`gemini-nano-banana-2.1`、`gemini-3.1-flash-image-preview`；旧工作流中的模型ID载入时转换为对应显示名称。
-- Gemini “自动”比例表示交由服务决定，分辨率使用 1K/2K/4K。输出格式 png/jpeg/webp 映射到 `generationConfig.imageConfig.imageOutputOptions.mimeType`；该字段按 ComfyUI 原生 Gemini 请求类型使用，NTAPI 与具体模型是否接受仍需实测。种子 0 不发送，正数发送；服务是否支持可复现以模型为准。超时时间用于请求与下载，默认 900 秒。
-- Gemini 保留 IMAGE 和“结果格式”STRING 两个输出；后者表示实际上游数据来源（inlineData/url），并非可选的返回格式。旧 9 控件工作流加载时会迁移密钥、比例、分辨率和种子位置；原接口根地址控件改用 NTAPI_BASE_URL。
+- 香蕉模型在请求顶层 `image_config` 传递比例和 1K/2K/4K 分辨率，“自动”会省略 `aspect_ratio`。输出格式由上游决定，种子用于 ComfyUI 缓存和运行后控制。保留两个控件的位置以兼容旧工作流，指定其他自定义 Gemini 模型时仍可使用原生 `generateContent` 接口及其输出格式与种子参数。超时时间默认 900 秒，用于请求与下载。
+- Gemini 保留 IMAGE 和“结果格式”STRING 两个输出；后者表示图像数据来自内嵌 Base64（`inlineData`）或下载地址（`url`），并非可选的返回格式。旧 9 控件工作流加载时会迁移密钥、比例、分辨率和种子位置；原接口根地址控件改用 NTAPI_BASE_URL。
 - 生图返回 URL、Base64 或 Gemini inlineData/fileData；图片批次尺寸不一致时，后续图片缩放至首张尺寸以组成 ComfyUI IMAGE 批次。输出为 RGB，无 MASK/透明通道。
 
 视频用法、协议限制和示例见 [视频节点说明](docs/VIDEO.md)。视频任务获取的 VIDEO 输出可直接连接原生 Save Video。
